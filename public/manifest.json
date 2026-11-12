@@ -1,0 +1,19 @@
+{
+  "name": "Sistem Komisi Borongan Multi-Tahap",
+  "short_name": "TrackBorongan",
+  "description": "Pelacakan kerja dan komisi borongan multi-tahap berbasis QR",
+  "start_url": "/worker",
+  "display": "standalone",
+  "background_color": "#090d16",
+  "theme_color": "#059669",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
+

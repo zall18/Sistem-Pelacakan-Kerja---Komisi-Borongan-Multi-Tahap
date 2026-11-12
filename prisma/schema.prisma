@@ -1,0 +1,201 @@
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Tenant {
+  id           String        @id @default(uuid())
+  name         String
+  phone        String?
+  address      String?
+  createdAt    DateTime      @default(now()) @map("created_at")
+  updatedAt    DateTime      @updatedAt @map("updated_at")
+
+  users        User[]
+  services     Service[]
+  orders       Order[]
+  cashAdvances CashAdvance[]
+  payrollRuns  PayrollRun[]
+
+  @@map("tenants")
+}
+
+model User {
+  id           String        @id @default(uuid())
+  tenantId     String        @map("tenant_id")
+  fullName     String        @map("full_name")
+  email        String?       @unique
+  passwordHash String?       @map("password_hash")
+  pinCodeHash  String?       @map("pin_code_hash") // 4-digit PIN hashed
+  role         String        @default("WORKER") // OWNER | CASHIER | WORKER
+  isActive     Boolean       @default(true) @map("is_active")
+  createdAt    DateTime      @default(now()) @map("created_at")
+
+  tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  taskLogs     TaskLog[]
+  cashAdvances CashAdvance[]
+  payrollItems PayrollItem[]
+
+  @@index([tenantId, role])
+  @@map("users")
+}
+
+model Service {
+  id          String         @id @default(uuid())
+  tenantId    String         @map("tenant_id")
+  name        String
+  description String?
+  basePrice   Float          @default(0) @map("base_price")
+  isActive    Boolean        @default(true) @map("is_active")
+  createdAt   DateTime       @default(now()) @map("created_at")
+
+  tenant      Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  stages      ServiceStage[]
+  orderItems  OrderItem[]
+
+  @@index([tenantId])
+  @@map("services")
+}
+
+model ServiceStage {
+  id               String      @id @default(uuid())
+  serviceId        String      @map("service_id")
+  stageName        String      @map("stage_name")
+  stepOrder        Int         @map("step_order") // 1, 2, 3...
+  pieceRateAmount  Float       @default(0) @map("piece_rate_amount")
+  estimatedMinutes Int         @default(30) @map("estimated_minutes")
+  isPhotoRequired  Boolean     @default(false) @map("is_photo_required")
+  createdAt        DateTime    @default(now()) @map("created_at")
+
+  service          Service     @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  taskLogs         TaskLog[]
+
+  @@unique([serviceId, stepOrder])
+  @@index([serviceId])
+  @@map("service_stages")
+}
+
+model Order {
+  id            String      @id @default(uuid())
+  tenantId      String      @map("tenant_id")
+  orderNumber   String      @map("order_number") // TRX-2611-0001
+  customerName  String      @map("customer_name")
+  customerPhone String      @map("customer_phone")
+  totalAmount   Float       @default(0) @map("total_amount")
+  paymentStatus String      @default("UNPAID") @map("payment_status") // UNPAID | DOWN_PAYMENT | PAID
+  createdAt     DateTime    @default(now()) @map("created_at")
+  updatedAt     DateTime    @updatedAt @map("updated_at")
+
+  tenant        Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  items         OrderItem[]
+
+  @@unique([tenantId, orderNumber])
+  @@index([tenantId, createdAt])
+  @@map("orders")
+}
+
+model OrderItem {
+  id            String      @id @default(uuid())
+  orderId       String      @map("order_id")
+  serviceId     String      @map("service_id")
+  itemQrCode    String      @unique @map("item_qr_code") // Token QR unik per fisik item
+  itemNotes     String?     @map("item_notes")
+  initialPhotos String      @default("[]") @map("initial_photos") // JSON array string of photo URLs
+  currentStatus String      @default("RECEIVED") @map("current_status") // RECEIVED | IN_PROGRESS | QC_PENDING | READY_FOR_PICKUP | COMPLETED
+  hasRedFlag    Boolean     @default(false) @map("has_red_flag")
+  redFlagNotes  String?     @map("red_flag_notes")
+  createdAt     DateTime    @default(now()) @map("created_at")
+  updatedAt     DateTime    @updatedAt @map("updated_at")
+
+  order         Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  service       Service     @relation(fields: [serviceId], references: [id], onDelete: Restrict)
+  taskLogs      TaskLog[]
+
+  @@index([itemQrCode])
+  @@index([orderId])
+  @@map("order_items")
+}
+
+model TaskLog {
+  id             String       @id @default(uuid())
+  orderItemId    String       @map("order_item_id")
+  serviceStageId String       @map("service_stage_id")
+  workerId       String       @map("worker_id")
+  earnedRate     Float        @map("earned_rate") // Snapshot tarif saat dikerjakan
+  photoProofUrl  String?      @map("photo_proof_url")
+  completedAt    DateTime     @default(now()) @map("completed_at")
+  payrollItemId  String?      @map("payroll_item_id")
+
+  orderItem      OrderItem    @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  serviceStage   ServiceStage @relation(fields: [serviceStageId], references: [id], onDelete: Restrict)
+  worker         User         @relation(fields: [workerId], references: [id], onDelete: Restrict)
+  payrollItem    PayrollItem? @relation(fields: [payrollItemId], references: [id], onDelete: SetNull)
+
+  // Anti double claim
+  @@unique([orderItemId, serviceStageId], name: "unique_item_stage_execution")
+  @@index([workerId, completedAt])
+  @@index([payrollItemId])
+  @@map("task_logs")
+}
+
+model CashAdvance {
+  id            String       @id @default(uuid())
+  tenantId      String       @map("tenant_id")
+  workerId      String       @map("worker_id")
+  amount        Float        @map("amount")
+  notes         String?
+  issueDate     DateTime     @default(now()) @map("issue_date")
+  isSettled     Boolean      @default(false) @map("is_settled")
+  payrollItemId String?      @map("payroll_item_id")
+  createdAt     DateTime     @default(now()) @map("created_at")
+
+  tenant        Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  worker        User         @relation(fields: [workerId], references: [id], onDelete: Restrict)
+  payrollItem   PayrollItem? @relation(fields: [payrollItemId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, workerId, isSettled])
+  @@map("cash_advances")
+}
+
+model PayrollRun {
+  id             String        @id @default(uuid())
+  tenantId       String        @map("tenant_id")
+  periodStart    DateTime      @map("period_start")
+  periodEnd      DateTime      @map("period_end")
+  totalGross     Float         @map("total_gross")
+  totalAdvances  Float         @map("total_advances")
+  totalNetPayout Float         @map("total_net_payout")
+  closedByUserId String        @map("closed_by_user_id")
+  createdAt      DateTime      @default(now()) @map("created_at")
+
+  tenant         Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  items          PayrollItem[]
+
+  @@index([tenantId, createdAt])
+  @@map("payroll_runs")
+}
+
+model PayrollItem {
+  id             String        @id @default(uuid())
+  payrollRunId   String        @map("payroll_run_id")
+  workerId       String        @map("worker_id")
+  grossAmount    Float         @map("gross_amount")
+  advanceAmount  Float         @map("advance_amount")
+  netAmount      Float         @map("net_amount")
+  taskCount      Int           @map("task_count")
+  isPaid         Boolean       @default(false) @map("is_paid")
+
+  payrollRun     PayrollRun    @relation(fields: [payrollRunId], references: [id], onDelete: Cascade)
+  worker         User          @relation(fields: [workerId], references: [id], onDelete: Restrict)
+  taskLogs       TaskLog[]
+  cashAdvances   CashAdvance[]
+
+  @@unique([payrollRunId, workerId])
+  @@map("payroll_items")
+}
+
